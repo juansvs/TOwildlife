@@ -1,0 +1,64 @@
+---
+title: "Coyote goes to Toronto"
+output: html_notebook
+---
+# Introduction
+This notebook explores data collected using camera traps placed around the city of Toronto. We focus on analyzing and understanding patterns of co-occurrence and evidence of competition and spatio-temporal overlap between red foxes (_Vulpes vulpes_) and coyotes (_Canis latrans_).
+First we import the main database, and format it to include only data for wild canids. This database has 3576 records. We found coyotes at 33 stations (75%), and foxes at 31 (70%) stations, out of 44 total stations (excluding the CPC stations). 
+
+# Data
+```{r read and format data, echo=FALSE}
+library(tidyverse)
+# select only foxes and coyotes
+data <- read_csv("../../Data/main_database_2207.csv") %>% filter(common_name %in% c("coyote", "fox"),
+                                                         !grepl("CPC", site_name)) %>% 
+  # keep only species, station, and date
+  select(common_name, site_name, DateTime)
+# count stations where each species appeared
+data %>% count(common_name, site_name) %>% count(common_name)
+```
+
+```{r co-occurrence table}
+read_csv("../../Data/main_database_2207.csv") %>% filter(!grepl("CPC", site_name)) %>% 
+  distinct(common_name, site_name) %>% 
+  group_by(site_name) %>% mutate(coyote = "coyote" %in% common_name, fox = "fox" %in% common_name) %>% 
+  ungroup() %>% 
+  distinct(site_name,coyote,fox) %>% count(fox, coyote)
+```
+
+There were 7 stations where there were no wild canids observed, 6 where there were only coyotes, 4 where there were only foxes, and 27 where we saw both species.
+What would the expected pattern of co-occurrence be species were randomly distributed?
+```{r chi square test}
+chisq.test(matrix(c(7,6,4,27), nrow = 2))
+```
+The number of stations with co-occurrence is larger than expected by chance if foxes and coyotes appeared occurred independently of each other. This is likely evidence of similar habitat requirements. 
+
+```{r resampling test}
+read_csv("../../Data/main_database_2207.csv") %>% filter(!grepl("CPC", site_name)) %>% 
+  distinct(common_name, site_name) %>% 
+  group_by(site_name) %>% mutate(coyote = "coyote" %in% common_name, fox = "fox" %in% common_name) %>% 
+  ungroup() %>% distinct(site_name, coyote, fox) -> fox_coy_presence
+resamp_list <- lapply(1:1000,\(x) {
+  fox_resamp <- sample(fox_coy_presence$fox, 44, replace = FALSE);
+  coy_resamp <- sample(fox_coy_presence$coyote, 44, replace = FALSE);
+  table(fox_resamp, coy_resamp)
+  })
+sapply(resamp_list, function(x) x[2,2]) %>% quantile(probs = c(0.025, 0.975))
+```
+Resampling the list of presence of foxes and coyotes 1000 times, in 95% of cases the number of stations with co-occurrence would be between 21 and 26, while we obtained 27 stations with co-occurrence, so this would be larger than expected if occurrence was random. I think this is the same as conducting a $X^2$ test.
+
+Are detection frequencies correlated?
+```{r detection freq}
+read_csv("../../Data/main_database_2207.csv") %>% filter(!grepl("CPC", site_name)) %>% 
+  count(site_name, common_name) %>% pivot_wider(names_from = common_name, values_from = n, values_fill = 0) %>% 
+  ggplot(aes(coyote, fox))+geom_point()+
+  labs(y = "Fox detections", x = "Coyote detections")
+```
+There is no clear trend between the detection frequency of coyotes and foxes. There are some stations where there are many detections (as many as 943 at a single station), but most stations have fewer than 50 detections of each species.
+
+```{r det freq hist}
+data %>% count(site_name, common_name) %>% 
+  group_by(common_name) %>% 
+  ggplot(aes(n))+geom_histogram(aes(fill = common_name))
+```
+
