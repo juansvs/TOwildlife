@@ -54,6 +54,34 @@ read_csv("../../Data/main_database_2207.csv") %>% filter(!grepl("CPC", site_name
   ggplot(aes(coyote, fox))+geom_point()+
   labs(y = "Fox detections", x = "Coyote detections")
 ```
+
+# Occupancy model
+
+I will use the `sjSDM` package to determine the occupancy of foxes, coyotes, and dogs. This analysis provides also the covariance between the species, so we could see if on average you would expect to find them together (independently of environmental covariates).
+
+```{r sjSDM}
+library(sjSDM)
+occ_data_raw <- read_csv("../../Data/main_database_2207.csv")
+occ_data <- occ_data_raw %>% filter(!common_name %in% c("empty", "horse", "small rodent", "not listed", "bird"))
+occ_data <- mutate(occ_data, DateTime = lubridate::mdy_hms(DateTime))
+ggplot(occ_data, aes(DateTime,common_name))+geom_point()
+occ_spmat_count <- count(occ_data, common_name, site_name) %>% pivot_wider(names_from = common_name, values_from = n, values_fill = 0) %>% column_to_rownames("site_name") %>% as.matrix()
+occ_spmat_pres <- occ_spmat_count>0
+
+# env data
+env_data_raw <- read_csv("../../Data/station_covars.csv")
+env_data <- left_join(tibble(site_name = rownames(occ_spmat_count)), env_data_raw)
+envmat <- as.matrix(select(env_data, contains("500")))
+
+occ_spmat_pres_complete <- occ_spmat_pres[complete.cases(envmat),]
+envmat_complete <- envmat[complete.cases(envmat),]
+
+# fit models
+occ_models <- list()
+occ_models[["base"]] <- sjSDM(Y = occ_spmat_pres_complete, env = envmat_complete)
+summary(occ_models[[1]])
+```
+
 There is no clear trend between the detection frequency of coyotes and foxes. There are some stations where there are many detections (as many as 943 at a single station), but most stations have fewer than 50 detections of each species.
 
 ```{r det freq hist}
