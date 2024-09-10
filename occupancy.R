@@ -4,7 +4,7 @@
 library(spOccupancy)
 library(tidyverse)
 
-# Import and arrange data
+# Import and arrange data --------
 occ_data_raw <- read_csv("../../Data/main_database_2207.csv")
 env_data_raw <- read_csv("../../Data/station_covars.csv")
 
@@ -16,7 +16,7 @@ ggplot(occ_data, aes(year_week,common_name))+geom_count(aes(size = after_stat(pr
 # Fit occupancy model
 # check which cameras to include
 siteswcovs <- env_data_raw[complete.cases(env_data_raw),"site_name"]
-# Create occupancy model matrices
+# Create model matrices -----------
 y_df <- filter(occ_data, year_week<=53) %>% 
   inner_join(siteswcovs) %>% 
   count(season, site_name, common_name) %>% 
@@ -44,15 +44,45 @@ moddata <- list(y = mody,
                 occ.covs = covs_df[,c("trees","elev", "ndvi", "fdist")] ,
                 det.covs = detcov,
                 coords = covs_df[,c("x", "y")])
-# fit model
+# fit model --------
 m1 <- lfMsPGOcc(occ.formula = ~scale(trees)+scale(elev)+scale(ndvi)+scale(fdist),
                 det.formula = ~temp,
                 data = moddata, 
                 n.factors = 2,n.burn = 3000, n.thin = 2, n.chains = 3, n.samples = 5000)
 summary(m1)
 
-# plot estimates
-betas <- m1$beta.samples
+# Null model
+mnull <- lfMsPGOcc(occ.formula = ~1,
+                   det.formula = ~1,
+                   data = moddata, 
+                   n.factors = 2,n.burn = 3000, n.thin = 2, n.chains = 3, n.samples = 5000)
+summary(mnull)
+waicOcc(mnull)
+waicOcc(m1)
+
+m2 <- lfMsPGOcc(occ.formula = ~scale(elev)+scale(ndvi)+scale(fdist),
+                det.formula = ~temp,
+                data = moddata, 
+                n.factors = 2,n.burn = 3000, n.thin = 2, n.chains = 3, n.samples = 5000)
+
+m3 <- lfMsPGOcc(occ.formula = ~scale(ndvi)+scale(fdist),
+                det.formula = ~temp,
+                data = moddata, 
+                n.factors = 2,n.burn = 3000, n.thin = 2, n.chains = 3, n.samples = 5000)
+m3b <- lfMsPGOcc(occ.formula = ~scale(ndvi)+scale(fdist),
+                det.formula = ~1,
+                data = moddata, 
+                n.factors = 2,n.burn = 3000, n.thin = 2, n.chains = 3, n.samples = 5000)
+m4 <- lfMsPGOcc(occ.formula = ~scale(trees)+scale(fdist),
+                det.formula = ~temp,
+                data = moddata, 
+                n.factors = 2,n.burn = 3000, n.thin = 2, n.chains = 3, n.samples = 5000)
+waicOcc(m4)
+# m3 is better based on waic = 2385.99
+summary(m3)
+
+# plot estimates --------
+betas <- m3$beta.samples
 tibble(coef = colnames(betas),
            mean = colMeans(betas),
            lq = apply(betas,2,quantile, prob = 0.025),
@@ -65,3 +95,27 @@ tibble(coef = colnames(betas),
   geom_linerange(aes(xmin = lq, xmax = uq))+
   geom_point()+
   facet_wrap(~parameter)
+
+
+
+#' If we focus just on canids, ie foxes and coyotes, we could use another 
+#' model that explicitly estimates the joint probabilities of use, rather 
+#' than the correlation between occupancy among species. The Rota et al. 
+#' (2016) model allows to do this, and to estimate how different covariates 
+#' affect the marginal and joint probabilities. This model is implemented
+#' in the unmarked package
+
+##### Rota model ####
+library(unmarked)
+
+canidy <- lapply(c("coyote", "fox"), \(x) mody[dimnames(mody)[[1]]==x,,])
+umdata <- unmarkedFrameOccuMulti(y = canidy, #A list of S (species) elements, each one a M(sites)xJ(occasions) matrix
+                                 siteCovs = covs_df,  # a dataframe of site covariates
+                                 obsCovs = detcov# named list of dataframe of covariates that vary within sites
+)
+
+rt_m1 <- occuMulti(detformulas = c('~temp', '~temp'), # one per sp
+          stateformulas = c('~ndvi+fdist','~ndvi+fdist','~1'), # columns correspond to 10, 01, and 11
+          data =umdata)
+rt_m1 
+plot(rt_m1)
